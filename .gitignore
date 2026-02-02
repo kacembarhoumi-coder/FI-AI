@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+env/
+.venv/
+pyvenv.cfg
+
+# Scraped / generated data
+data/
+db/
+financial_market.txt
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

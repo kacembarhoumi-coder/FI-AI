@@ -1,0 +1,23 @@
+{
+  "market_basics": [
+    "https://en.wikipedia.org/wiki/Financial_market",
+    "https://en.wikipedia.org/wiki/Market_(economics)"
+
+   ],
+  "trading_basics": [
+    "https://en.wikipedia.org/wiki/Trading",
+    "https://en.wikipedia.org/wiki/Day_trading"
+  ],
+  "order_types": [
+    "https://en.wikipedia.org/wiki/Order_(exchange)",
+    "https://en.wikipedia.org/wiki/Limit_order"
+  ],
+  "fees_and_costs": [
+    "https://en.wikipedia.org/wiki/Transaction_cost",
+    "https://www.investor.gov/introduction-investing/investing-basics/costs-investing"
+  ],
+  "risk_and_leverage": [
+    "https://en.wikipedia.org/wiki/Financial_risk",
+    "https://en.wikipedia.org/wiki/Leverage_(finance)"
+  ]
+}
