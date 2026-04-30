@@ -73,3 +73,21 @@ Here are examples of how to respond:"""),
 
 
 
+def format_examples(examples, example_prompt):
+    """
+    Converts raw example dicts into formatted message pairs
+    that can be inserted into the MessagesPlaceholder.
+    """
+    formatted = []
+    for example in examples:
+        # Format each example using the example_prompt template
+        messages = example_prompt.format_messages(
+            context=example["context"],
+            question=example["question"],
+            answer=example["answer"]
+        )
+        formatted.extend(messages)
+    return formatted
+
+
+

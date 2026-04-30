@@ -1,5 +1,5 @@
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 from ingest_faiss import find_txt, load_doc, chunk_documents
 
@@ -14,7 +14,7 @@ def main ():
         return
     doc = load_doc(path)
     chunks = chunk_documents(doc)
-    embeddings = HuggingFaceBgeEmbeddings(model_name = EMBEDDING_MODEL)
+    embeddings = HuggingFaceEmbeddings(model_name = EMBEDDING_MODEL)
     vectordb = FAISS.from_documents(chunks,embeddings)
     vectordb.save_local(INDEX_DIR)
     print(f"vectors saved in {INDEX_DIR}")
