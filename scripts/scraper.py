@@ -1,310 +1,254 @@
-import os, json, re, time, hashlib
-from urllib.parse import urlparse, urljoin
-
+import os
 import requests
+import json
+import re
+import hashlib
+import time
 from bs4 import BeautifulSoup
 
 
-SOURCES_JSON = "scripts/url_by_topic.json"
-CLEAN_ROOT = "data/clean"
-RAW_ROOT = "data/raw"
 
+params = {
+    "action": "query",
+    "format": "json",
+    "prop": "extracts",
+    "explaintext": 1,
+    "redirects": 1,
+    "titles": "TITLE"
+}
+
+headers = {
+    "User-Agent": "MyFinanceApp/1.0 (contact: kacembarhoumi@gmail.com)"
+}
+
+
+
+
+
+DATA_DIR = "data/clean"
+SOURCE_JSON = "url_by_topic.json"
 MAX_PAGE_PER_TOPIC = 30
-REQUEST_DELAY = 1.2
+REQUEST_DELAY = 1.5
 TIMEOUT = 20
-USER_AGENT = "finance-rag-scraper/1.0 (educational)"
-
-# Phase 2 expansion limit per seed page (kept small on purpose)
-EXPAND_LINKS_PER_SEED = 6
+USER_AGENT = "FinanceEducationBot/1.0"
 
 
-# -------------------------
-# STEP A: filesystem + utils
-# -------------------------
-def ensure_dirs():
-    os.makedirs(CLEAN_ROOT, exist_ok=True)
-    os.makedirs(RAW_ROOT, exist_ok=True)
-
-def sha1(text: str) -> str:
-    return hashlib.sha1(text.encode("utf-8")).hexdigest()
-
-def domain(url: str) -> str:
-    return urlparse(url).netloc.lower()
-
-def safe_slug(url: str) -> str:
-    parsed = urlparse(url)
-    d = parsed.netloc.replace(".", "_")
-    path = re.sub(r"[^a-zA-Z0-9]+", "_", parsed.path.strip("/").lower())
-    if not path:
-        path = "root"
-    h = sha1(url)[:8]
-    return f"{d}__{path}__{h}.txt"
-
-def normalize_url(base: str, href: str) -> str:
-    u = urljoin(base, href)
-    u = u.split("#")[0]
-    return u
-
-
-# -------------------------
-# STEP B: load sources
-# -------------------------
-def load_sources() -> dict:
-    with open(SOURCES_JSON, "r", encoding="utf-8") as f:
+def load_files() -> dict:
+    with open(SOURCE_JSON, 'r', encoding='utf-8') as f:
         return json.load(f)
+    
 
 
-# -------------------------
-# STEP C: fetch HTML
-# -------------------------
-def fetch_html(url: str) -> str | None:
+
+def ensure_dir():
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+def text_hash(text:str)-> str:
+    return hashlib.sha1(text.encode('utf-8')).hexdigest()
+
+def url_to_filename(url:str)-> str:
+    clean = url.replace('https://', '').replace('http://', '')
+    clean = re.sub(r'[^\w\-]', '_', clean)
+    url_hash = text_hash(url)[:8]
+    return f"{clean}_{url_hash}.txt"
+
+
+def fetch_html (url:str) -> str | None:
     try:
-        r = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT)
-        if r.status_code != 200:
+        response = requests.get(url, headers= {'User-Agent' : USER_AGENT}, timeout=TIMEOUT)
+        print("  status:", response.status_code)
+        print("  content-type:", response.headers.get("Content-Type", ""))
+
+
+        if response.status_code != 200:
+            print("CODE STATUS ERROR")
             return None
-        ctype = (r.headers.get("Content-Type") or "").lower()
-        if "text/html" not in ctype:
+        content_type = response.headers.get("Content-Type", "")
+        print("DEBUG content_type repr:", repr(content_type))
+
+        if ("text/html" not in content_type.lower()) and ("application/xhtml+xml" not in content_type):
+            print("REJECT not html:", content_type)
             return None
-        return r.text
-    except Exception:
+
+        html= response.text
+        if not html or len(html)<30:
+            print("too short or empty text")
+            return
+        
+        
+        return response.text
+    except Exception as e:
+        print(f"Error fetching {url}: {e}")
         return None
 
+def clean_text(html:str, url:str) -> tuple[str, str]:
+    soup = BeautifulSoup(html,"html.parser")
+    title = '' 
+    if soup.title:
+        title = soup.title.get_text().strip()
+    main_content = find_content_container(soup, url)
+    cleaned_text = clean_html_text(main_content)
+    return title, cleaned_text
 
-# -------------------------
-# STEP D: extraction (domain-aware)
-# -------------------------
-def extract_main_container(soup: BeautifulSoup, url: str):
-    d = domain(url)
-
-    # Wikipedia: main content lives here
-    if "wikipedia.org" in d:
-        main = soup.select_one("#mw-content-text")
-        if main:
-            return main
-
-    # Generic good targets
-    for selector in ["article", "main"]:
-        main = soup.select_one(selector)
-        if main:
-            return main
-
-    return soup.body or soup
+def find_content_container(soup, url):
+    
+    if 'wikipedia.org' in url:
+        content = soup.find('div', id='mw-content-text')
+        if content:
+            return content
+    
+    for tag in ['article', 'main']:
+        content = soup.find(tag)
+        if content:
+            return content
+    
+    return soup.body if soup.body else soup
 
 
-def clean_text_from_container(container) -> str:
-    # remove noise tags inside container
-    for tag in container.find_all(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
+def clean_html_text(container) -> str:
+    
+    
+    for tag in container.find_all(['script', 'style', 'nav', 'header', 'footer', 'aside']):
         tag.decompose()
-
-    text = container.get_text(separator="\n")
-
-    lines = [ln.strip() for ln in text.splitlines()]
-    lines = [ln for ln in lines if ln]
-
-    cleaned = "\n".join(lines)
-    cleaned = re.sub(r"[ \t]+", " ", cleaned)
-
+    
+    text = container.get_text(separator='\n')
+    
+    lines = [line.strip() for line in text.splitlines()]
+    lines = [line for line in lines if line]
+    
+    cleaned = '\n'.join(lines)
+    
+    cleaned = re.sub(r' +', ' ', cleaned)
+    
     return cleaned
 
+def is_useful_content(text: str, url: str) -> bool:
 
-def extract_clean_text(html: str, url: str) -> tuple[str, str]:
-    soup = BeautifulSoup(html, "lxml")
-
-    title = ""
-    if soup.title and soup.title.get_text():
-        title = soup.title.get_text().strip()
-
-    container = extract_main_container(soup, url)
-    cleaned = clean_text_from_container(container)
-
-    return title, cleaned
-
-
-# -------------------------
-# STEP E: quality gates
-# -------------------------
-BAD_URL_KEYWORDS = [
-    "privacy", "terms", "contact", "about", "cookies", "subscribe",
-    "login", "signin", "signup", "advert", "careers"
-]
-
-def looks_like_content_url(url: str) -> bool:
-    """Keep only URLs that look like 'content pages'."""
-    u = url.lower()
-    if any(k in u for k in BAD_URL_KEYWORDS):
+    # Minimum length check
+    min_length = 800 if 'wikipedia.org' in url else 600
+    if len(text) < min_length:
         return False
-
-    d = domain(url)
-    path = urlparse(url).path.lower()
-
-    # Wikipedia: only /wiki/ pages (avoid /special, etc.)
-    if "wikipedia.org" in d:
-        return path.startswith("/wiki/") and (":" not in path)  # filter Special:, File:, etc.
-
-    # Investopedia: terms + articles are often good
-    if "investopedia.com" in d:
-        return path.startswith("/terms/") or path.startswith("/articles/")
-
-    # FINRA: investor education tends to be under /investors/
-    if "finra.org" in d:
-        return path.startswith("/investors/")
-
-    # investor.gov: educational sections
-    if "investor.gov" in d:
-        return "/introduction-investing/" in path
-
-    # CME education pages usually contain /education/
-    if "cmegroup.com" in d:
-        return "/education/" in path
-
-    # Default: allow, but Phase 2 is still small
-    return True
-
-
-def is_useful_text(text: str, url: str) -> bool:
-    """
-    Reject junk pages that are mostly navigation or too short.
-    """
-    if "wikipedia.org" in url:
-        return len(text) >= 800
-    if len(text) < 900:  # stronger than your previous 600
-        return False
-
-    # Too many very short lines often indicates menus
+    
     lines = text.splitlines()
-    short_lines = sum(1 for ln in lines if len(ln) <= 25)
-    if lines and (short_lines / max(len(lines), 1)) > 0.65:
+    short_lines = sum(1 for line in lines if len(line) < 30)
+    
+    if lines and (short_lines / len(lines)) > 0.6:
         return False
-
+    
     return True
 
-
-# -------------------------
-# STEP F: link discovery (filtered)
-# -------------------------
-def discover_links(seed_url: str, html: str, limit: int) -> list[str]:
-    soup = BeautifulSoup(html, "lxml")
-    base_domain = domain(seed_url)
-
-    links: list[str] = []
-    for a in soup.find_all("a", href=True):
-        u = normalize_url(seed_url, a["href"])
-        if not u:
-            continue
-        if domain(u) != base_domain:
-            continue
-        if u in links:
-            continue
-        if not looks_like_content_url(u):
-            continue
-
-        links.append(u)
-        if len(links) >= limit:
-            break
-
-    return links
-
-
-# -------------------------
-# STEP G: save docs
-# -------------------------
-def save_doc(topic: str, url: str, title: str, cleaned: str) -> str:
-    topic_dir = os.path.join(CLEAN_ROOT, topic)
+def save_document(topic: str, url: str, title: str, content: str) -> str:
+    
+    # Create topic directory
+    topic_dir = os.path.join(DATA_DIR, topic)
     os.makedirs(topic_dir, exist_ok=True)
+    
+    filename = url_to_filename(url)
+    filepath = os.path.join(topic_dir, filename)
 
-    filename = safe_slug(url)
-    out_path = os.path.join(topic_dir, filename)
-
-    with open(out_path, "w", encoding="utf-8") as f:
+    with open(filepath, 'w', encoding='utf-8') as f:
         f.write(f"TITLE: {title}\n")
         f.write(f"SOURCE: {url}\n")
         f.write(f"TOPIC: {topic}\n")
-        f.write("DATE: unknown\n\n")
-        f.write(cleaned)
+        f.write("\n")
+        f.write(content)
+    
+    return filepath
 
-    return out_path
 
+def crawl_topic(topic: str, urls: list[str]):
 
-# -------------------------
-# STEP H: crawl topic (SEEDS FIRST)
-# -------------------------
-def crawl_topic(topic: str, seed_urls: list[str]):
-    print(f"\n=== Topic: {topic} ===")
-
-    seen_urls = set()
-    seen_hashes = set()
-    saved = 0
-
-    # Phase 1: scrape seeds only (high quality)
-    candidate_links: list[str] = []
-
-    for url in seed_urls:
-        if saved >= MAX_PAGE_PER_TOPIC:
+    
+    print(f"\n{'='*60}")
+    print(f"Crawling topic: {topic}")
+    print(f"{'='*60}")
+    
+    
+    seen_urls = set()       # URLs we've visited
+    seen_hashes = set()     # Content hashes we've saved
+    saved_count = 0         # How many documents saved
+    
+    for url in urls:
+        # Check limit
+        if saved_count >= MAX_PAGE_PER_TOPIC:
+            print(f"Reached limit of {MAX_PAGE_PER_TOPIC} pages")
             break
+        
+        # Skip duplicates
         if url in seen_urls:
+            print(f"Skipping (already visited): {url}")
             continue
+        
         seen_urls.add(url)
-
+        print(f"\n Processing: {url}")
+        
+        # Fetch HTML
         html = fetch_html(url)
+        if not html:
+            print("Failed to fetch HTML")
+            continue
+        
+
         time.sleep(REQUEST_DELAY)
-        if html is None:
-            print(f"skip seed (fetch failed): {url}")
+        
+        
+        title, content = clean_text(html, url)
+        
+        # Quality check
+        if not is_useful_content(content, url):
+            print(" Skipping (low quality content)")
             continue
-
-        title, cleaned = extract_clean_text(html, url)
-        if not is_useful_text(cleaned, url):
-            print(f"skip seed (low quality): {url}")
+        
+        # Duplicate content check
+        content_hash = text_hash(content)
+        if content_hash in seen_hashes:
+            print("Skipping (duplicate content)")
             continue
+        
+        seen_hashes.add(content_hash)
+        
+        # Save it!
+        filepath = save_document(topic, url, title, content)
+        saved_count += 1
+        
+        print(f" Saved [{saved_count}]: {filepath}")
+        print(f"   Title: {title[:50]}...")
+        print(f"   Length: {len(content)} characters")
+    
+    print(f"\n{'='*60}")
+    print(f"Topic '{topic}' complete: {saved_count} documents saved")
+    print(f"{'='*60}")
 
-        h = sha1(cleaned)
-        if h in seen_hashes:
-            print(f"skip seed (duplicate): {url}")
-            continue
-        seen_hashes.add(h)
-
-        out_path = save_doc(topic, url, title, cleaned)
-        saved += 1
-        print(f"[seed {saved}] saved -> {out_path}")
-
-        # collect candidates for Phase 2 (small, filtered)
-        candidate_links.extend(discover_links(url, html, limit=EXPAND_LINKS_PER_SEED))
-
-    # Phase 2: scrape only filtered candidates AFTER seeds
-    for url in candidate_links:
-        if saved >= MAX_PAGE_PER_TOPIC:
-            break
-        if url in seen_urls:
-            continue
-        seen_urls.add(url)
-
-        html = fetch_html(url)
-        time.sleep(REQUEST_DELAY)
-        if html is None:
-            continue
-
-        title, cleaned = extract_clean_text(html, url)
-        if not is_useful_text(cleaned):
-            continue
-
-        h = sha1(cleaned)
-        if h in seen_hashes:
-            continue
-        seen_hashes.add(h)
-
-        out_path = save_doc(topic, url, title, cleaned)
-        saved += 1
-        print(f"[expand {saved}] saved -> {out_path}")
 
 
 def main():
-    print("✅ scraper started (seeds-first)")
-    ensure_dirs()
+    print("content scraping is starting...\n")
+    ensure_dir()
+    print(f"data directory {DATA_DIR} is ready")
+    try:
+        sources = load_files()
+        print(f"url souces are loaded from {SOURCE_JSON}")
+    except FileNotFoundError:
+        print(f"Error: {SOURCE_JSON} is not found")
+        return
+    except json.JSONDecodeError:
+        print("INVALID JSON")
+        return
+    
+    total_topics = len(sources)
+    topic_number = 1
+    for topic in sources:
+        urls = sources[topic]
+        print(f"\n {topic_number}/ {total_topics}")
+        crawl_topic(topic,urls)
+    
 
-    sources = load_sources()
-    for topic, seeds in sources.items():
-        crawl_topic(topic, seeds)
+    print("\n" + "="*60)
+    print("🎉 Scraping complete!")
+    print(f"Check your data in: {DATA_DIR}/")
+    print("="*60)
 
-    print("\n Done. Check data/clean/<topic>/")
+
 
 if __name__ == "__main__":
     main()

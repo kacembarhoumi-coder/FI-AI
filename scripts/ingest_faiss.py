@@ -31,12 +31,20 @@ def find_topic(path : str) -> str:
 
 
 
+
+
     
 def load_doc(file_path: list[str]) -> list[Document]:
     documents = []
     for path in file_path:
-        loader = TextLoader(path, encoding = "utf-8")
-        docs = loader.load()
+        loader = TextLoader(path)
+        try:
+            docs = loader.load()
+        except UnicodeDecodeError as e:
+            print(f"encoding error {path} is {e}")
+            loader = TextLoader(path, encoding="cp1252")
+            docs = loader.load()
+
         topic = find_topic(path)
         filename = os.path.basename(path)
 
